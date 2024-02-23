@@ -1,7 +1,8 @@
 name: Release
 on:
   push:
-  pull_request:
+    tags:
+      - '*'
 
 jobs:
   release:
@@ -34,62 +35,10 @@ jobs:
       with:
         cache-source: var-lib-apt
         cache-target: /var/lib/apt
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USER }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
     - name: "Build binaries from Dockerfile.artifact"
-      run: docker buildx build -o /tmp/slirpbuilds --build-arg SOURCE_DATE_EPOCH --platform=amd64,arm64,arm,s390x,ppc64le,riscv64 -f Dockerfile.artifact .
-    - name: "Create /tmp/artifact"
-      run: |
-        mkdir -p /tmp/artifact
-        mv /tmp/slirpbuilds/linux_amd64/slirp4netns /tmp/artifact/slirp4netns-x86_64
-        mv /tmp/slirpbuilds/linux_arm64/slirp4netns /tmp/artifact/slirp4netns-aarch64
-        mv /tmp/slirpbuilds/linux_arm_v7/slirp4netns /tmp/artifact/slirp4netns-armv7l
-        mv /tmp/slirpbuilds/linux_s390x/slirp4netns /tmp/artifact/slirp4netns-s390x
-        mv /tmp/slirpbuilds/linux_ppc64le/slirp4netns /tmp/artifact/slirp4netns-ppc64le
-        mv /tmp/slirpbuilds/linux_riscv64/slirp4netns /tmp/artifact/slirp4netns-riscv64
-        echo "${SOURCE_DATE_EPOCH}" >/tmp/artifact/SOURCE_DATE_EPOCH
-    - name: "SHA256SUMS"
-      run: (cd /tmp/artifact; sha256sum *) | tee /tmp/SHA256SUMS
-    - name: "The sha256sum of the SHA256SUMS file"
-      run: sha256sum /tmp/SHA256SUMS
-    - name: "Prepare the release note"
-      run: |
-        tag="${GITHUB_REF##*/}"
-        shasha=$(sha256sum /tmp/SHA256SUMS | awk '{print $1}')
-        libslirp_version=$(/tmp/artifact/slirp4netns-x86_64 -v | grep -oP '^libslirp: \K\S*')
-        libseccomp_version=$(/tmp/artifact/slirp4netns-x86_64 -v | grep -oP '^libseccomp: \K\S*')
-        ubuntu_version=$(grep -oP '^ARG UBUNTU_VERSION=\K\S*' Dockerfile.artifact)
-        cat << EOF | tee /tmp/release-note.txt
-        #### Changes
-        (To be documented)
-
-        #### Install
-        \`\`\`
-        curl -o slirp4netns --fail -L https://github.com/${{ github.repository }}/releases/download/${tag}/slirp4netns-\$(uname -m)
-        chmod +x slirp4netns
-        \`\`\`
-
-        #### About the binaries
-        The binaries are statically linked with libslirp ${libslirp_version} and libseccomp ${libseccomp_version} using Ubuntu ${ubuntu_version}.
-
-        The binaries were built automatically on GitHub Actions.
-        The build log is available for 90 days: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-        The sha256sum of the SHA256SUMS file itself is \`${shasha}\` .
-
-        The binaries should be reproducible with the following command:
-        \`\`\`
-        docker buildx build \
-          -o /tmp/slirpbuilds \
-          --build-arg SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
-          --build-arg BUILDKIT_CONTEXT_KEEP_GIT_DIR=1 \
-          --platform=amd64,arm64,arm,s390x,ppc64le,riscv64 \
-          -f Dockerfile.artifact \
-          "https://github.com/${{ github.repository }}.git#${tag}"
-        \`\`\`
-        EOF
-    - name: "Create release"
-      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        tag="${GITHUB_REF##*/}"
-        gh release create -F /tmp/release-note.txt --draft --title "${tag}" "${tag}" /tmp/artifact/* /tmp/SHA256SUMS
+      run: docker buildx build -t ${{ secrets.DOCKERHUB_USER }}/slirp4netns:${GITHUB_REF#refs/*/} --push --build-arg SOURCE_DATE_EPOCH --platform=amd64,arm64 -f Dockerfile.artifact .
